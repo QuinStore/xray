@@ -1,0 +1,79 @@
+#install dulu
+if [[ ! -e /etc/apt/sources.list.d/cloudflare-client.list && ! -e /usr/bin/warp-cli ]]; then
+  curl https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list
+  echo "Please wait..."
+  apt-get update -y &> /dev/null
+  apt -y install cloudflare-warp &> /dev/null
+  if [[ $(warp-cli --accept-tos account) == *Missing* ]]; then
+    warp-cli --accept-tos register
+  fi
+  warp-cli --accept-tos set-mode proxy
+  warp-cli --accept-tos connect
+  warp-cli --accept-tos enable-always-on
+  systemctl -q enable --now warp-svc
+  systemctl -q start warp-svc
+  #curl -sx "socks5h://127.0.0.1:40000" https://www.cloudflare.com/cdn-cgi/trace --connect-timeout 2
+fi
+
+##menu ON IP v4 Warp
+function Regenerate_IPV4_Lic() {
+  Install_Wg
+  systemctl -q stop wg-quick@wgcf
+  if [[ -e /usr/sbin/potatonc/wgcf-account.toml ]]; then
+    if [[ -e /usr/sbin/potatonc/wgcf-profile.conf ]]; then
+      cp /usr/sbin/potatonc/wgcf-account.toml ./
+      cp /usr/sbin/potatonc/wgcf-profile.conf ./
+    else
+      cp /usr/sbin/potatonc/wgcf-account.toml ./
+      wgcf generate
+      cp wgcf-profile.conf /usr/sbin/potatonc/
+    fi
+  else
+    yes | wgcf register
+    sed -i "s#$(cat wgcf-account.toml | grep 'license_key' | tr -d '\n')#license_key = '$(cat /usr/sbin/potatonc/warp_lic.conf | tr -d '\n')'#g" wgcf-account.toml
+    wgcf update
+    wgcf generate
+    cp wgcf-account.toml /usr/sbin/potatonc/
+    cp wgcf-profile.conf /usr/sbin/potatonc/
+  fi
+  rm -f "${WGCF_ProfilePath}"
+  mv wgcf* "${WGCF_ProfileDir}/"
+  New_Conf_Wgcf_IPV4
+}
+
+function Check_Config_IfOk_IPV4() {
+  if [[ -e /etc/wireguard/wgcf.conf ]]; then
+    if [[ -n $(cat /etc/wireguard/wgcf.conf | grep -w "PostUp") && -n $(cat /etc/wireguard/wgcf.conf | grep -w "PostDown") ]]; then
+      sysctl -w net.ipv6.conf.all.disable_ipv6=0 > /dev/null 2>&1
+      systemctl -q enable wg-quick@wgcf
+      systemctl -q start wg-quick@wgcf
+      systemctl -q restart wg-quick@wgcf
+      echo "on" > /etc/wireguard/status
+      sleep 2
+      warpotato menu
+    else
+      LOGO
+      echo -e " ${Red}Bad Configuration!${Suffix}"
+      sleep 2
+      systemctl -q stop warp-svc
+      systemctl -q stop wg-quick@wgcf --now
+      systemctl -q disable wg-quick@wgcf
+      systemctl -q start warp-svc
+      echo "off" > /etc/wireguard/status
+      sleep 2
+      warpotato menu
+    fi
+  else
+    LOGO
+    echo -e " ${Red}Dependencies Not Installed!${Suffix}"
+    sleep 2
+    systemctl -q stop warp-svc
+    systemctl -q stop wg-quick@wgcf --now
+    systemctl -q disable wg-quick@wgcf
+    systemctl -q start warp-svc
+    echo "off" > /etc/wireguard/status
+    sleep 2
+    warpotato menu
+  fi
+}
